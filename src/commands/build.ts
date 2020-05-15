@@ -15,9 +15,11 @@ import {transformEsmImports} from '../rewrite-imports';
 import mkdirp from 'mkdirp';
 import {ImportMap, CommandOptions} from '../util';
 import {wrapEsmProxyResponse, getFileBuilderForWorker} from './build-util';
+import {command as installCommand} from './install';
 const {copy} = require('fs-extra');
 
-export async function command({cwd, config}: CommandOptions) {
+export async function command(commandOptions: CommandOptions) {
+  const {cwd, config} = commandOptions;
   process.env.NODE_ENV = 'production';
 
   const messageBus = new EventEmitter();
@@ -139,6 +141,13 @@ export async function command({cwd, config}: CommandOptions) {
   const includeFileSets: [string, string, string[]][] = [];
   for (const [id, dirDisk, dirDest] of mountDirDetails) {
     messageBus.emit('WORKER_UPDATE', {id, state: ['RUNNING', 'yellow']});
+    if (id === 'mount:web_modules') {
+      commandOptions.config.installOptions.dest = path.join(buildDirectoryLoc, 'web_modules');
+      commandOptions.config.installOptions.env.NODE_ENV = 'production';
+      await installCommand(commandOptions);
+      messageBus.emit('WORKER_COMPLETE', {id});
+      continue;
+    }
     let allFiles;
     try {
       allFiles = glob.sync(`**/*`, {

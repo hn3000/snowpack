@@ -2,7 +2,9 @@ import {EventEmitter} from 'events';
 import ansiEscapes from 'ansi-escapes';
 import chalk from 'chalk';
 import util from 'util';
+import readline from 'readline';
 import {DevScript} from '../config';
+import {addCommand} from './add-rm';
 
 function getStateString(workerState: any, isWatch: boolean) {
   if (workerState.state) {
@@ -28,10 +30,18 @@ export function paint(
   bus: EventEmitter,
   registeredWorkers: DevScript[],
   buildMode: {dest: string} | undefined,
-  devMode: {port: number; ips: string[]; startTimeMs: number} | undefined,
+  devMode:
+    | {
+        port: number;
+        ips: string[];
+        startTimeMs: number;
+        addPackage: (pkgName: string, needsAdd: boolean) => void;
+      }
+    | undefined,
 ) {
   let consoleOutput = '';
   let hasBeenCleared = false;
+  let missingWebModuleIsInstalled = false;
   let missingWebModule: null | string = null;
   const allWorkerStates: any = {};
 
@@ -71,21 +81,14 @@ export function paint(
         missingPackageName += '/' + deepPackagePathParts.shift();
       }
       process.stdout.write(`${chalk.red.underline.bold('▼ Snowpack')}\n\n`);
-      process.stdout.write(`  Package ${chalk.bold(missingWebModule)} could not be found!\n`);
-      process.stdout.write(
-        `    1. Make sure that your ${chalk.bold(
-          'web_modules/',
-        )} directory is mounted correctly.\n`,
-      );
-      process.stdout.write(
-        `    2. Add ${chalk.bold(
-          missingPackageName,
-        )} to your package.json "dependencies" or "webDependencies".\n`,
-      );
-      process.stdout.write(
-        `    3. run ${chalk.bold('snowpack install')} to install your new dependency.\n`,
-      );
-      process.stdout.write('\n');
+      if (missingWebModuleIsInstalled) {
+        process.stdout.write(`  New import ${chalk.bold(missingWebModule)} found!\n\n`);
+        process.stdout.write(`  ${chalk.bold('Press Enter')} to install it with Snowpack.\n\n`);
+      } else {
+        process.stdout.write(`  Package ${chalk.bold(missingWebModule)} could not be found!\n\n`);
+        process.stdout.write(`  ${chalk.bold('Press Enter')} to install it with Snowpack.\n\n`);
+      }
+      return;
     }
     for (const config of registeredWorkers) {
       const workerState = allWorkerStates[config.id];
@@ -156,31 +159,33 @@ export function paint(
     repaint();
   });
   bus.on('NEW_SESSION', () => {
-    missingWebModule = null;
-    if (consoleOutput) {
+    if (!missingWebModule && consoleOutput) {
       consoleOutput = ``;
       hasBeenCleared = true;
-      repaint();
     }
+    missingWebModule = null;
+    repaint();
   });
-  bus.on('MISSING_WEB_MODULE', ({specifier}) => {
+  bus.on('MISSING_WEB_MODULE', ({specifier, isInstalled}) => {
     missingWebModule = specifier;
+    missingWebModuleIsInstalled = isInstalled;
     repaint();
   });
 
-  // const rl = readline.createInterface({
-  //   input: process.stdin,
-  //   output: process.stdout,
-  // });
-  // rl.on('line', (input) => {
-  //   for (const [workerId, config] of registeredWorkers) {
-  //     if (!allWorkerStates[workerId].done && !allWorkerStates[workerId].state) {
-  //       allWorkerStates[workerId].output = '';
-  //     }
-  //   }
-  //   hasBeenCleared = true;
-  //   repaint();
-  // });
+  if (devMode) {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    rl.on('line', (input) => {
+      if (!missingWebModule) {
+        return;
+      }
+
+      devMode.addPackage(missingWebModule, !missingWebModuleIsInstalled);
+      repaint();
+    });
+  }
 
   // unmountDashboard = render(<App bus={bus} registeredWorkers={registeredWorkers} />).unmount;
   repaint();

@@ -1,3 +1,8 @@
+Forked to play around with proxying: 
+
+- added `--handlers <handler-file.js>` option to proxy worker
+- slightly improved error message for mount worker
+
 [![CI](https://github.com/pikapkg/snowpack/workflows/CI/badge.svg?event=push)](https://github.com/pikapkg/snowpack/actions)
 
 <p align="center">

@@ -324,7 +324,6 @@ export async function command({cwd, config}: CommandOptions) {
             delete proxyOptions.headers.connection;
             
             if (handlers.onProxyReq) {
-              proxyOptions.headers = ;
               handlers.onProxyReq(proxyOptions, req, res);
             }
             const response = await got(proxyOptions);

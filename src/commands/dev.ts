@@ -102,25 +102,30 @@ function getMountedDirectory(cwd: string, workerConfig: DevScript): [string, str
   cmdArr.shift();
   const {to, _} = yargs(cmdArr);
   if (_.length !== 1 || (to && to[0] !== '/')) {
-    throw new Error(`script[${id}] must use the format: "mount dir [--to /PATH]"`);
+    throw new Error(`script[${id}] must use the format: "mount dir [--to /PATH]", but was "${cmd}"`);
   }
   const dirDisk = path.resolve(cwd, cmdArr[0]);
   const dirUrl = to || `/${cmdArr[0]}`;
   return [dirDisk, dirUrl];
 }
 
-function getProxyConfig(workerConfig: DevScript): [string, string] {
+function getProxyConfig(cwd, workerConfig: DevScript): [string, string, string] {
   const {id, cmd} = workerConfig;
   const cmdArr = cmd.split(/\s+/);
   if (cmdArr[0] !== 'proxy') {
     throw new Error(`script[${id}] must use the proxy command`);
   }
   cmdArr.shift();
-  const {to, _} = yargs(cmdArr);
+  const {to, handlers, _} = yargs(cmdArr);
   if (_.length !== 1 || !to || to[0] !== '/') {
     throw new Error(`script[${id}] must use the format: "proxy http://SOME.URL --to /PATH"`);
   }
-  return [_[0], to];
+  let handlerCode: any = {};
+  if (handlers !== undefined) {
+    handlerCode = require(path.resolve(cwd, handlers)) || {};
+  }
+
+  return [_[0], to, handlerCode];
 }
 
 export async function command({cwd, config}: CommandOptions) {
@@ -136,7 +141,7 @@ export async function command({cwd, config}: CommandOptions) {
   const liveReloadClients: http.ServerResponse[] = [];
   const messageBus = new EventEmitter();
   const mountedDirectories: [string, string][] = [];
-  const proxyDetails: [string, string][] = [];
+  const proxyDetails: [string, string, any][] = [];
   const dependencyImportMapLoc = path.join(config.installOptions.dest, 'import-map.json');
   let dependencyImportMap: ImportMap = {imports: {}};
   try {
@@ -244,7 +249,7 @@ export async function command({cwd, config}: CommandOptions) {
       runLintAll(workerConfig);
     }
     if (workerConfig.type === 'proxy') {
-      proxyDetails.push(getProxyConfig(workerConfig));
+      proxyDetails.push(getProxyConfig(cwd, workerConfig));
       setTimeout(
         () => messageBus.emit('WORKER_UPDATE', {id: workerConfig.id, state: ['DONE', 'green']}),
         400,
@@ -304,16 +309,37 @@ export async function command({cwd, config}: CommandOptions) {
         return;
       }
 
-      for (const [url, path] of proxyDetails) {
+      // TODO: use http-proxy-middleware instead
+      for (const [url, path, handlers] of proxyDetails) {
         if (reqPath.startsWith(path)) {
           const newPath = reqPath.substr(path.length);
           try {
-            const response = await got(`${url}${newPath}`, {
-              headers: req.headers,
+            let proxyOptions = {
+              url: `${url}${newPath}`,
+              headers: { ...req.headers },
               throwHttpErrors: false,
-            });
-            res.writeHead(response.statusCode, response.headers);
-            res.write(response.body);
+            };
+
+            delete proxyOptions.headers.host;
+            delete proxyOptions.headers.connection;
+            
+            if (handlers.onProxyReq) {
+              proxyOptions.headers = ;
+              handlers.onProxyReq(proxyOptions, req, res);
+            }
+            const response = await got(proxyOptions);
+            if (handlers.onProxyRes) {
+              let responseCopy = {
+                ...response,
+                headers: { ...response.headers },
+              }
+              handlers.onProxyRes(responseCopy, req, res);
+              res.writeHead(responseCopy.statusCode, responseCopy.headers);
+              res.write(responseCopy.body);
+            } else {
+              res.writeHead(response.statusCode, response.headers);
+              res.write(response.body);
+            }
           } catch (err) {
             console.error(`✘ ${reqUrl}\n${err.message}`);
             sendError(res, 500);
